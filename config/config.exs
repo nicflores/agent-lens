@@ -19,6 +19,7 @@ config :agent_lens,
 config :agent_lens, AgentLens.Kpi.Registry,
   kpis: [
     AgentLens.Kpis.SuccessRate,
+    AgentLens.Kpis.LatencyP95,
     AgentLens.Kpis.Toxicity,
     AgentLens.Kpis.Sentiment,
     AgentLens.Kpis.Drift
