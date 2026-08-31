@@ -16,6 +16,9 @@ defmodule AgentLens.Application do
         # Ensures partitions and syncs the KPI catalog. Must come after the Repo
         # and before anything that ingests. Refuses the boot on a bad KPI config.
         boot_child(),
+        # Registry and DynamicSupervisor for the ingestion pollers. Always
+        # started; whether any pollers run is a separate config decision.
+        AgentLens.Ingestion.Supervisor,
         # Start to serve requests, typically the last entry
         AgentLensWeb.Endpoint
       ]

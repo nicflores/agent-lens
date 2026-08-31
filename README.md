@@ -41,9 +41,15 @@ an acceptance test that enforces this.
 Requires Elixir 1.17+, Erlang/OTP 26+, and a reachable PostgreSQL.
 
 ```bash
-mix setup           # deps, database, assets
-mix phx.server      # http://localhost:4000
+mix setup             # deps, database, assets
+mix agent_lens.seed   # ~90 days of mock history, with anomalies
+mix phx.server        # http://localhost:4000
 ```
+
+`mix agent_lens.seed` backfills every configured workspace from the mock client — roughly 21,600
+runs and 50,000 observations per agent. It is safe to re-run; everything upserts on its natural key.
+Automatic polling is off by default so `mix test` and `mix run` stay fast; enable it with
+`config :agent_lens, AgentLens.Ingestion, enabled: true`.
 
 Database connection defaults to `localhost:5433` and can be overridden with the standard
 `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` environment variables.
@@ -51,8 +57,15 @@ Database connection defaults to `localhost:5433` and can be overridden with the 
 ## Configuration
 
 Dev and test run against a **mock LangSmith client** by default: no API key, no network. The mock
-generates ~90 days of backfill with deliberately injected anomalies at known timestamps, so the
-dashboard has something meaningful to show and drift detection has a fixture set.
+is deterministic — the same window returns identical data every time — so it doubles as the fixture
+set for drift detection rather than being mere filler. It injects three findable events, exposed
+symbolically via `AgentLens.LangSmith.Mock.anomalies/0`:
+
+| Anomaly | What it looks like |
+|---|---|
+| Latency spike | ~1.2s → ~7s for four days, with errors rising alongside, then recovers |
+| Toxicity regression | 0.02 → 0.16 at a simulated model version change, and does **not** recover |
+| Cost creep | Per-run cost drifting steadily upward across the window |
 
 | Variable | Default | Notes |
 |---|---|---|

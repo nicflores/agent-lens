@@ -60,13 +60,20 @@ langsmith_api_key =
     System.fetch_env!("LANGSMITH_API_KEY")
   end
 
-# Comma-separated workspace ids, one per agent.
+# Comma-separated workspace ids, one per agent. Against the mock these are
+# arbitrary labels, so dev and test get a sample set rather than nothing.
+default_workspaces =
+  if langsmith_client == AgentLens.LangSmith.Mock do
+    ["ws-support", "ws-research", "ws-underwriting"]
+  else
+    []
+  end
+
 langsmith_workspaces =
-  "LANGSMITH_WORKSPACES"
-  |> System.get_env("")
-  |> String.split(",", trim: true)
-  |> Enum.map(&String.trim/1)
-  |> Enum.reject(&(&1 == ""))
+  case "LANGSMITH_WORKSPACES" |> System.get_env("") |> String.split(",", trim: true) do
+    [] -> default_workspaces
+    given -> given |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+  end
 
 if langsmith_client == AgentLens.LangSmith.HTTP and langsmith_workspaces == [] do
   raise """
