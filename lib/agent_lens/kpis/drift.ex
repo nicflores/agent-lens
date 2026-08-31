@@ -21,8 +21,15 @@ defmodule AgentLens.Kpis.Drift do
   alias AgentLens.Kpi.Input
 
   @source :latency_p95
-  @bins 10
+  @max_bins 10
   @min_observations 30
+
+  # Target observations per bin. PSI is biased upward when bins are thinly
+  # populated: with ten bins and fifty points, ordinary sampling noise moves
+  # each bin by a fifth of its mass and reads as drift. Sizing the bins to the
+  # sample keeps a quiet window quiet, which matters more than resolution —
+  # a drift KPI that cries wolf is one people learn to ignore.
+  @per_bin 20
 
   # Floor for an empty bin, so a bin present on one side only yields a large
   # finite contribution rather than an infinity.
@@ -35,9 +42,11 @@ defmodule AgentLens.Kpis.Drift do
       name: "Latency Drift (PSI)",
       short_description: "How far the latency distribution has moved from its baseline.",
       methodology: """
-      The baseline distribution is split into #{@bins} quantile bins. Current and
-      baseline populations are binned identically, and the Population Stability
-      Index is the sum over bins of `(actual - expected) * ln(actual / expected)`.
+      The baseline distribution is split into quantile bins — at most
+      #{@max_bins}, and fewer when the sample is small, targeting about
+      #{@per_bin} observations per bin. Current and baseline populations are
+      binned identically, and the Population Stability Index is the sum over
+      bins of `(actual - expected) * ln(actual / expected)`.
 
       Requires at least #{@min_observations} observations on both sides; below
       that the statistic is noise, and the KPI reports no value rather than a
@@ -62,17 +71,28 @@ defmodule AgentLens.Kpis.Drift do
     current = Input.Window.current(window, @source)
     baseline = Input.Window.baseline(window, @source)
 
+    bins = bin_count(current, baseline)
+
     with :ok <- check_size(current),
          :ok <- check_size(baseline),
-         {:ok, edges} <- bin_edges(baseline) do
-      {:ok, psi(current, baseline, edges)}
+         {:ok, edges} <- bin_edges(baseline, bins) do
+      {:ok, psi(current, baseline, edges, bins)}
     end
   end
 
   defp check_size(values) when length(values) < @min_observations, do: :skip
   defp check_size(_values), do: :ok
 
-  defp bin_edges(baseline) do
+  # Sized by the smaller population, since that is the one whose bins would be
+  # thin.
+  defp bin_count(current, baseline) do
+    min(length(current), length(baseline))
+    |> div(@per_bin)
+    |> max(2)
+    |> min(@max_bins)
+  end
+
+  defp bin_edges(baseline, bins) do
     sorted = Enum.sort(baseline)
 
     if List.first(sorted) == List.last(sorted) do
@@ -80,7 +100,7 @@ defmodule AgentLens.Kpis.Drift do
       # land in one bin and PSI would be meaningless.
       :skip
     else
-      {:ok, Enum.map(1..(@bins - 1), &quantile(sorted, &1 / @bins))}
+      {:ok, Enum.map(1..(bins - 1), &quantile(sorted, &1 / bins))}
     end
   end
 
@@ -90,9 +110,9 @@ defmodule AgentLens.Kpis.Drift do
     Enum.at(sorted, index |> max(0) |> min(count - 1))
   end
 
-  defp psi(current, baseline, edges) do
-    actual = proportions(current, edges)
-    expected = proportions(baseline, edges)
+  defp psi(current, baseline, edges, bins) do
+    actual = proportions(current, edges, bins)
+    expected = proportions(baseline, edges, bins)
 
     actual
     |> Enum.zip(expected)
@@ -100,7 +120,7 @@ defmodule AgentLens.Kpis.Drift do
     |> Enum.sum()
   end
 
-  defp proportions(values, edges) do
+  defp proportions(values, edges, bins) do
     total = length(values)
 
     counts =
@@ -108,7 +128,7 @@ defmodule AgentLens.Kpis.Drift do
         Map.update(acc, bin_index(value, edges), 1, &(&1 + 1))
       end)
 
-    Enum.map(0..(@bins - 1), fn bin ->
+    Enum.map(0..(bins - 1), fn bin ->
       max(Map.get(counts, bin, 0) / total, @epsilon)
     end)
   end

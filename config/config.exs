@@ -25,6 +25,27 @@ config :agent_lens, AgentLens.Kpi.Registry,
     AgentLens.Kpis.Drift
   ]
 
+# Background jobs.
+#
+# The rollup cadence is staggered rather than all-on-the-hour: each grain
+# recomputes a window of recent buckets, so late observations are picked up
+# without any job needing to know whether another has finished.
+config :agent_lens, Oban,
+  repo: AgentLens.Repo,
+  queues: [rollups: 4, maintenance: 1, judge: 2],
+  plugins: [
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"* * * * *", AgentLens.Workers.RollupWorker, args: %{"granularity" => "minute"}},
+       {"7 * * * *", AgentLens.Workers.RollupWorker, args: %{"granularity" => "hour"}},
+       {"20 0 * * *", AgentLens.Workers.RollupWorker, args: %{"granularity" => "day"}},
+       # After the daily rollup, so the series it compares are complete.
+       {"40 0 * * *", AgentLens.Workers.DerivedWorker},
+       {"30 3 * * *", AgentLens.Workers.RetentionWorker}
+     ]},
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
+  ]
+
 # Configure the endpoint
 config :agent_lens, AgentLensWeb.Endpoint,
   url: [host: "localhost"],

@@ -31,6 +31,7 @@ defmodule AgentLens.Store.KpiRollup do
     :p50,
     :p95,
     :p99,
+    :distinct_count,
     :sample_n,
     :population_n
   ]
@@ -49,6 +50,10 @@ defmodule AgentLens.Store.KpiRollup do
     field :p50, :float
     field :p95, :float
     field :p99, :float
+
+    # Backs the `:count_distinct` aggregation, so every value in the enum has a
+    # column behind it and the rollup layer never has to branch on the KPI.
+    field :distinct_count, :integer
 
     field :sample_n, :integer, default: 0
     field :population_n, :integer, default: 0

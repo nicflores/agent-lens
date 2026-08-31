@@ -19,6 +19,7 @@ defmodule AgentLens.Application do
         # Registry and DynamicSupervisor for the ingestion pollers. Always
         # started; whether any pollers run is a separate config decision.
         AgentLens.Ingestion.Supervisor,
+        {Oban, Application.fetch_env!(:agent_lens, Oban)},
         # Start to serve requests, typically the last entry
         AgentLensWeb.Endpoint
       ]
