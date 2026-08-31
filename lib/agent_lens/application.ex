@@ -20,6 +20,9 @@ defmodule AgentLens.Application do
         # started; whether any pollers run is a separate config decision.
         AgentLens.Ingestion.Supervisor,
         {Oban, Application.fetch_env!(:agent_lens, Oban)},
+        # Read-path: one ETS cache, and the single process that writes it.
+        AgentLens.Cache,
+        {AgentLens.Broadcaster, start_timer: AgentLens.Broadcaster.timer_enabled?()},
         # Start to serve requests, typically the last entry
         AgentLensWeb.Endpoint
       ]

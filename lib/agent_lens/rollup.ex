@@ -139,6 +139,35 @@ defmodule AgentLens.Rollup do
   def value_expression(:count_distinct), do: "distinct_count::double precision"
 
   @doc """
+  The SQL expression combining several buckets into one, for a given aggregation.
+
+  Used when a range holds more stored buckets than the caller's point budget.
+  Each aggregation combines the way its own arithmetic demands:
+
+    * `:mean` and `:rate` become a **weighted** mean — `sum(sum) / sum(count)`.
+      Averaging the bucket averages would weight a quiet minute equally with a
+      busy one.
+    * `:count` and `:count_distinct` add. The distinct case over-counts anything
+      appearing in two sub-buckets; it is an upper bound, not a true distinct.
+    * Percentiles take the **maximum** of the sub-buckets. A percentile of
+      percentiles does not exist, so this is deliberately an approximation, and
+      the conservative one: it preserves a spike rather than averaging it away.
+      A downsampled percentile series should be read as an envelope.
+
+  Every series that used this reports `downsampled?: true`, so a caller never
+  mistakes an envelope for the exact figures.
+  """
+  @spec combine_expression(atom()) :: String.t()
+  def combine_expression(aggregation) when aggregation in [:mean, :rate],
+    do: "(sum(sum) / NULLIF(sum(count), 0))"
+
+  def combine_expression(:p50), do: "max(p50)"
+  def combine_expression(:p95), do: "max(p95)"
+  def combine_expression(:p99), do: "max(p99)"
+  def combine_expression(:count), do: "sum(count)::double precision"
+  def combine_expression(:count_distinct), do: "sum(distinct_count)::double precision"
+
+  @doc """
   Recomputes every bucket of `granularity` whose start falls in `[from, to)`.
 
   Idempotent: buckets are upserted, so a window can be recomputed after late or

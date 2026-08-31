@@ -21,6 +21,9 @@ config :agent_lens, AgentLensWeb.Endpoint,
   secret_key_base: "4qq4CW22XjmuNTeUjiRZ3DJ4woWwJk4kMhJoJ0CRP+0WbzNEd8Qq+bGmzzCKamfs",
   server: false
 
+# Each test drives the broadcaster explicitly against the connection it owns.
+config :agent_lens, AgentLens.Broadcaster, enabled: false
+
 # Jobs are enqueued but never executed unless a test asks; the sandbox owns
 # the connection, and a background queue draining against it would be a race.
 config :agent_lens, Oban, testing: :manual
