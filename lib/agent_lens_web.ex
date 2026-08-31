@@ -81,6 +81,7 @@ defmodule AgentLensWeb do
       import Phoenix.HTML
       # Core UI components
       import AgentLensWeb.CoreComponents
+      import AgentLensWeb.DashboardComponents
 
       # Common modules used in templates
       alias AgentLensWeb.Layouts

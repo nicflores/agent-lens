@@ -103,3 +103,112 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   AgentLens design system
+
+   Two rules do most of the work here:
+
+   1. Semantic colour is reserved *strictly* for status. Nothing decorative is
+      ever green, amber or red, so when one of those appears it always carries
+      information. Everything else is built from one accent and a neutral ramp.
+
+   2. `unknown` is grey and must never read as healthy. It is a distinct state,
+      not a lighter shade of good.
+
+   Colour never carries a signal on its own: every status is icon + colour +
+   text, for the meaningful fraction of people who will not distinguish red
+   from green.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --al-good: oklch(62% 0.14 155);
+  --al-warn: oklch(70% 0.15 75);
+  --al-crit: oklch(58% 0.20 25);
+  --al-unknown: oklch(65% 0.01 260);
+
+  --al-good-soft: oklch(95% 0.04 155);
+  --al-warn-soft: oklch(95% 0.05 75);
+  --al-crit-soft: oklch(95% 0.05 25);
+  --al-unknown-soft: oklch(95% 0.005 260);
+
+  --al-accent: oklch(55% 0.17 265);
+  --al-ink: oklch(25% 0.015 260);
+  --al-ink-soft: oklch(52% 0.015 260);
+  --al-surface: oklch(99.5% 0.002 260);
+  --al-panel: oklch(100% 0 0);
+  --al-line: oklch(91% 0.006 260);
+  --al-grid: oklch(94% 0.004 260);
+}
+
+[data-theme="dark"] {
+  --al-good: oklch(72% 0.15 155);
+  --al-warn: oklch(78% 0.15 75);
+  --al-crit: oklch(68% 0.19 25);
+  --al-unknown: oklch(60% 0.012 260);
+
+  --al-good-soft: oklch(30% 0.05 155);
+  --al-warn-soft: oklch(32% 0.06 75);
+  --al-crit-soft: oklch(32% 0.07 25);
+  --al-unknown-soft: oklch(30% 0.008 260);
+
+  --al-accent: oklch(70% 0.15 265);
+  --al-ink: oklch(94% 0.008 260);
+  --al-ink-soft: oklch(70% 0.012 260);
+  --al-surface: oklch(21% 0.012 260);
+  --al-panel: oklch(25% 0.014 260);
+  --al-line: oklch(33% 0.014 260);
+  --al-grid: oklch(30% 0.012 260);
+}
+
+@theme inline {
+  --color-status-good: var(--al-good);
+  --color-status-warning: var(--al-warn);
+  --color-status-critical: var(--al-crit);
+  --color-status-unknown: var(--al-unknown);
+
+  --color-status-good-soft: var(--al-good-soft);
+  --color-status-warning-soft: var(--al-warn-soft);
+  --color-status-critical-soft: var(--al-crit-soft);
+  --color-status-unknown-soft: var(--al-unknown-soft);
+
+  --color-al-accent: var(--al-accent);
+  --color-al-ink: var(--al-ink);
+  --color-al-ink-soft: var(--al-ink-soft);
+  --color-al-surface: var(--al-surface);
+  --color-al-panel: var(--al-panel);
+  --color-al-line: var(--al-line);
+  --color-al-grid: var(--al-grid);
+}
+
+body {
+  background-color: var(--al-surface);
+  color: var(--al-ink);
+}
+
+/* Digits must not jitter as values update on a live dashboard. */
+.al-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* uPlot draws into a plain div; these keep it inheriting our palette rather
+   than shipping its own. */
+.uplot,
+.uplot * {
+  font-family: inherit;
+}
+
+.u-axis text,
+.u-legend {
+  fill: var(--al-ink-soft);
+  color: var(--al-ink-soft);
+}
+
+.u-legend {
+  font-size: 0.75rem;
+}
+
+.u-legend .u-marker {
+  border-radius: 2px;
+}

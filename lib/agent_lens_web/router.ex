@@ -17,7 +17,9 @@ defmodule AgentLensWeb.Router do
   scope "/", AgentLensWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", AgentGridLive, :index
+    live "/agents/:agent_id", AgentLive, :show
+    live "/agents/:agent_id/kpis/:slug", KpiLive, :show
   end
 
   # Other scopes may use custom stacks.

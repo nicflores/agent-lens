@@ -31,42 +31,56 @@ defmodule AgentLensWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
+  attr :breadcrumbs, :list, default: [], doc: "trail of %{label:, navigate:} maps"
+
+  slot :actions, doc: "controls rendered at the right of the header"
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://phoenix.hexdocs.pm/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </header>
+    <div class="min-h-dvh bg-al-surface">
+      <header class="sticky top-0 z-30 border-b border-al-line bg-al-surface/85 backdrop-blur">
+        <div class="mx-auto flex max-w-[1400px] items-center gap-4 px-4 py-3 sm:px-6 lg:px-8">
+          <.link navigate={~p"/"} class="flex items-center gap-2.5 text-al-ink">
+            <span class="hero-viewfinder-circle size-5 text-al-accent" aria-hidden="true" />
+            <span class="text-sm font-semibold tracking-tight">AgentLens</span>
+          </.link>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+          <nav
+            :if={@breadcrumbs != []}
+            class="flex min-w-0 items-center gap-2 text-sm"
+            aria-label="Breadcrumb"
+          >
+            <span :for={crumb <- @breadcrumbs} class="flex min-w-0 items-center gap-2">
+              <span class="text-al-ink-soft/50" aria-hidden="true">/</span>
+              <.link
+                :if={crumb[:navigate]}
+                navigate={crumb.navigate}
+                class="truncate text-al-ink-soft hover:text-al-ink"
+              >
+                {crumb.label}
+              </.link>
+              <span
+                :if={!crumb[:navigate]}
+                class="truncate font-medium text-al-ink"
+                aria-current="page"
+              >
+                {crumb.label}
+              </span>
+            </span>
+          </nav>
+
+          <div class="ml-auto flex items-center gap-4">
+            {render_slot(@actions)}
+            <.theme_toggle />
+          </div>
+        </div>
+      </header>
+
+      <main class="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
         {render_slot(@inner_block)}
-      </div>
-    </main>
+      </main>
+    </div>
 
     <.flash_group flash={@flash} />
     """
