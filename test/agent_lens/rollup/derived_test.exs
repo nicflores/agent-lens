@@ -141,6 +141,59 @@ defmodule AgentLens.Rollup.DerivedTest do
     end
   end
 
+  # The failure this exists to prevent: once an incident scrolls out of the
+  # current window and into the trailing baseline, current-versus-baseline
+  # diverges again and the KPI reads critical for a month after everything has
+  # recovered. Thirty days of false alarms is how a dashboard loses its
+  # audience.
+  describe "an incident sitting in the baseline" do
+    @wide [current_days: 2, baseline_days: 10]
+
+    setup do
+      %{latency_spike: spike} = Mock.anomalies()
+      # Days 28..40: the baseline for day 40 spans 28..38 and contains the whole
+      # spike, while the current window 38..40 is entirely healthy.
+      ingest(spike.from_day - 6, spike.to_day + 3)
+      %{spike: spike}
+    end
+
+    defp wide_drift_for(as_of_day) do
+      {:ok, _} = Derived.run!(day(as_of_day), @wide)
+
+      Repo.one(
+        from(r in KpiRollup,
+          where:
+            r.kpi_slug == "latency_drift" and
+              r.bucket_start == ^Rollup.bucket_start(day(as_of_day), :day)
+        )
+      )
+    end
+
+    test "is not reported as drift once the current window is healthy again", %{spike: spike} do
+      recovered = wide_drift_for(spike.to_day + 3)
+
+      assert recovered.sum < 0.1,
+             "an incident in the baseline must not read as drift, got #{recovered.sum}"
+    end
+
+    test "excludes the unhealthy periods from the baseline", %{spike: spike} do
+      recovered = wide_drift_for(spike.to_day + 3)
+
+      # Ten baseline days of hour buckets would be ~240; the four spike days are
+      # dropped, so the surviving baseline is materially smaller.
+      assert recovered.population_n < 240
+      assert recovered.population_n > 30
+    end
+
+    # The fix must not make the detector deaf: an incident in the *current*
+    # window is still exactly what this KPI is for.
+    test "still reports drift while the incident is happening", %{spike: spike} do
+      during = wide_drift_for(spike.from_day + 2)
+
+      assert during.sum > 0.25, "expected drift during the incident, got #{during.sum}"
+    end
+  end
+
   describe "insufficient data" do
     test "skips rather than inventing a number when there is no history" do
       assert {:ok, 0} = Derived.run!(day(20), @windows)

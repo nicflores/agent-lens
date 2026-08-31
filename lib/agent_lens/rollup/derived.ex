@@ -21,12 +21,32 @@ defmodule AgentLens.Rollup.Derived do
   immediately preceding it, so the two never overlap. Both are read at hour
   granularity, which gives a distribution with enough points to be meaningful
   while still fitting inside the 90-day hour-bucket retention.
+
+  ## Why the baseline excludes unhealthy periods
+
+  A rolling baseline has an unpleasant property: once an incident scrolls out of
+  the current window and into the reference window, current-versus-baseline
+  diverges *again* — and the KPI reads critical for the whole length of the
+  baseline after everything has already recovered. In testing, a four-day
+  latency spike produced a PSI of 0.39 on a fully recovered system, and would
+  have gone on doing so for a month.
+
+  That is not a statistical error. PSI is faithfully reporting that the two
+  distributions differ; the flaw is in asking it to treat a period we already
+  know was broken as the definition of normal.
+
+  So the baseline keeps only buckets in which the source KPI was inside its own
+  thresholds, which is what a person would do by hand. `baseline_excluded`
+  records how much was dropped. If too little healthy history survives, the KPI
+  returns `:skip` and renders unknown, rather than comparing against a reference
+  it cannot vouch for.
   """
 
   require Logger
 
   alias AgentLens.Kpi.Input
   alias AgentLens.Kpi.Registry
+  alias AgentLens.Kpi.Thresholds
   alias AgentLens.Repo
   alias AgentLens.Rollup
 
@@ -108,9 +128,13 @@ defmodule AgentLens.Rollup.Derived do
         {slug, series(repo, registry, agent, slug, current_from, current_to)}
       end)
 
-    baseline =
-      Map.new(sources, fn slug ->
-        {slug, series(repo, registry, agent, slug, baseline_from, current_from)}
+    {baseline, excluded} =
+      Enum.reduce(sources, {%{}, %{}}, fn slug, {values, counts} ->
+        observed = series(repo, registry, agent, slug, baseline_from, current_from)
+        healthy = healthy_only(registry, slug, observed)
+
+        {Map.put(values, slug, healthy),
+         Map.put(counts, slug, length(observed) - length(healthy))}
       end)
 
     %Input.Window{
@@ -119,8 +143,28 @@ defmodule AgentLens.Rollup.Derived do
       bucket_end: current_to,
       granularity: @source_granularity,
       current: current,
-      baseline: baseline
+      baseline: baseline,
+      baseline_excluded: excluded
     }
+  end
+
+  # Keeps only the periods in which the source KPI was within its own
+  # thresholds.
+  #
+  # Judged on thresholds alone, deliberately ignoring `min_sample_n`: the
+  # question here is "was this period anomalous", not "is this bucket
+  # individually trustworthy". A source bucket is far finer than the grain those
+  # minimums were set for, so consulting them would discard the entire baseline.
+  defp healthy_only(registry, slug, values) do
+    case Registry.fetch_definition(registry, slug) do
+      {:ok, definition} ->
+        Enum.filter(values, fn value ->
+          Thresholds.classify(definition.direction, definition.thresholds, value) == :good
+        end)
+
+      :error ->
+        values
+    end
   end
 
   # Reads whichever statistic the source KPI's `aggregation` names. That

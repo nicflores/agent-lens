@@ -1,0 +1,37 @@
+# Local PostgreSQL for AgentLens.
+#
+# Dedicated to this project rather than shared with another, so its lifecycle,
+# credentials, and data are ours alone: tearing down someone else's stack should
+# never take this database with it.
+#
+#   docker compose up -d
+#   mix ecto.setup
+#
+# Port 5434 avoids the common 5432 and anything already sitting on 5433.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agent-lens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agent_lens
+      POSTGRES_PASSWORD: agent_lens_local_dev_only
+      POSTGRES_DB: agent_lens_dev
+      # Deterministic sorting, and a UTC clock so a session time zone can never
+      # quietly reinterpret a timestamp.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "5434:5432"
+    volumes:
+      - agent_lens_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_lens -d agent_lens_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  agent_lens_pgdata:

@@ -38,21 +38,24 @@ an acceptance test that enforces this.
 
 ## Getting started
 
-Requires Elixir 1.17+, Erlang/OTP 26+, and a reachable PostgreSQL.
+Requires Elixir 1.17+, Erlang/OTP 26+, and Docker.
 
 ```bash
+docker compose up -d  # PostgreSQL 16 on port 5434
 mix setup             # deps, database, assets
 mix agent_lens.seed   # ~90 days of mock history, with anomalies
 mix phx.server        # http://localhost:4000
 ```
 
+The database runs in a container dedicated to this project, so its lifecycle and data are not
+entangled with anything else you happen to be running. Connection settings are overridable with the
+standard `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` variables if you would rather point at your
+own PostgreSQL.
+
 `mix agent_lens.seed` backfills every configured workspace from the mock client — roughly 21,600
-runs and 50,000 observations per agent. It is safe to re-run; everything upserts on its natural key.
+runs and 65,000 observations per agent. It is safe to re-run; everything upserts on its natural key.
 Automatic polling is off by default so `mix test` and `mix run` stay fast; enable it with
 `config :agent_lens, AgentLens.Ingestion, enabled: true`.
-
-Database connection defaults to `localhost:5433` and can be overridden with the standard
-`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` environment variables.
 
 ## Configuration
 
@@ -83,5 +86,16 @@ mix dialyzer
 
 ## Status
 
-Phase 0 (scaffold) and Phase 1 (domain core) of an eight-phase build. The domain core is pure —
-no database, no HTTP, no processes on the data path. Ingestion, rollups, and the dashboard follow.
+Phases 0–5 of an eight-phase build are complete: scaffold, domain core, schema, ingestion,
+rollups, and the read path. What remains is the UI (Phase 6), live delta pushes (Phase 7), and the
+real LangSmith HTTP client (Phase 8).
+
+The pieces that exist today:
+
+- A pure domain core — the `Kpi` behaviour, thresholds, and four-state status evaluation — with no
+  database, no HTTP, and no processes on the data path.
+- Five partitioned tables, with retention by `DROP PARTITION` rather than `DELETE`.
+- Two pollers per workspace on independent cursors, with inline extraction.
+- Tiered rollups (minute / hour / day) and a derived pass computing PSI drift.
+- An ETS-cached read path behind a single broadcaster: a cached overview read is ~29µs against
+  ~84ms uncached, so twenty open dashboards cost about what one does.

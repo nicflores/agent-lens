@@ -2,10 +2,10 @@ import Config
 
 # Configure your database
 config :agent_lens, AgentLens.Repo,
-  username: System.get_env("PGUSER", "cora"),
-  password: System.get_env("PGPASSWORD", "cora_local_dev_only"),
+  username: System.get_env("PGUSER", "agent_lens"),
+  password: System.get_env("PGPASSWORD", "agent_lens_local_dev_only"),
   hostname: System.get_env("PGHOST", "localhost"),
-  port: String.to_integer(System.get_env("PGPORT", "5433")),
+  port: String.to_integer(System.get_env("PGPORT", "5434")),
   database: "agent_lens_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
