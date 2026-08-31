@@ -21,6 +21,10 @@ config :agent_lens, AgentLensWeb.Endpoint,
   secret_key_base: "4qq4CW22XjmuNTeUjiRZ3DJ4woWwJk4kMhJoJ0CRP+0WbzNEd8Qq+bGmzzCKamfs",
   server: false
 
+# The sandbox owns the connection in test, and each test sets up exactly the
+# state it needs, so the startup sweep is driven explicitly instead.
+config :agent_lens, AgentLens.Boot, enabled: false
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

@@ -7,21 +7,30 @@ defmodule AgentLens.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      AgentLensWeb.Telemetry,
-      AgentLens.Repo,
-      {DNSCluster, query: Application.get_env(:agent_lens, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: AgentLens.PubSub},
-      # Start a worker by calling: AgentLens.Worker.start_link(arg)
-      # {AgentLens.Worker, arg},
-      # Start to serve requests, typically the last entry
-      AgentLensWeb.Endpoint
-    ]
+    children =
+      [
+        AgentLensWeb.Telemetry,
+        AgentLens.Repo,
+        {DNSCluster, query: Application.get_env(:agent_lens, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: AgentLens.PubSub},
+        # Ensures partitions and syncs the KPI catalog. Must come after the Repo
+        # and before anything that ingests. Refuses the boot on a bad KPI config.
+        boot_child(),
+        # Start to serve requests, typically the last entry
+        AgentLensWeb.Endpoint
+      ]
+      |> Enum.reject(&is_nil/1)
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: AgentLens.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # Skipped in test, where the sandbox owns the connection and each test sets up
+  # exactly the state it needs.
+  defp boot_child do
+    if AgentLens.Boot.enabled?(), do: {AgentLens.Boot, []}
   end
 
   # Tell Phoenix to update the endpoint configuration
