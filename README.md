@@ -4,6 +4,95 @@ An observability platform for AI agents. AgentLens reads agent telemetry from
 [LangSmith](https://smith.langchain.com), computes KPIs over time, stores them in Postgres, and
 renders them per-agent in a Phoenix LiveView dashboard.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    LS[("LangSmith<br/>one workspace per agent")]
+    LLM[("LiteLLM proxy")]
+
+    subgraph ingestion["Ingestion — one poller per workspace per stream"]
+        RUNS["Runs poller<br/>watermark + overlap"]
+        FB["Feedback poller<br/>independent watermark"]
+    end
+
+    subgraph storage["Storage — PostgreSQL"]
+        RT[("runs<br/>weekly partitions")]
+        OB[("kpi_observations<br/>monthly partitions")]
+        RU[("kpi_rollups<br/>minute · hour · day")]
+        TH[("kpi_thresholds<br/>per-agent overrides")]
+    end
+
+    subgraph jobs["Scheduled work — Oban"]
+        ROLL["Rollup"]
+        DER["Derived pass<br/>PSI drift"]
+        JUDGE["Judge tier<br/>backfill"]
+        RET["Retention<br/>DROP PARTITION"]
+    end
+
+    subgraph readpath["Read path — one writer, N readers"]
+        Q["Query"]
+        BC["Broadcaster"]
+        CACHE[("ETS cache")]
+    end
+
+    subgraph ui["LiveView"]
+        GRID["Agent grid"]
+        AGENT["Agent drilldown"]
+        KPI["KPI deep dive"]
+    end
+
+    REG{{"KPI Registry<br/>definitions"}}
+
+    LS --> RUNS
+    LS --> FB
+    RUNS --> RT
+    RUNS -->|extracted, inline| OB
+    FB -->|imported| OB
+    LLM --> JUDGE
+    RT --> JUDGE
+    JUDGE -->|judged| OB
+    OB --> ROLL
+    ROLL --> RU
+    RU --> DER
+    DER -->|derived| RU
+    RET -.-> RT
+    RET -.-> OB
+    RET -.-> RU
+    RU --> Q
+    TH --> Q
+    Q --> BC
+    BC --> CACHE
+    BC -->|PubSub| GRID
+    BC -->|PubSub| AGENT
+    BC -->|PubSub| KPI
+    CACHE --> GRID
+    CACHE --> AGENT
+    CACHE --> KPI
+    REG -.-> RUNS
+    REG -.-> ROLL
+    REG -.-> DER
+    REG -.-> Q
+```
+
+Four things the diagram is meant to make obvious:
+
+**The registry feeds both sides.** Ingestion, rollups, the derived pass and the read path all resolve
+KPI *definitions* rather than knowing about KPI *modules*. That dotted fan-out is why adding a KPI is
+one file plus one config line — none of those four layers has anything to branch on.
+
+**Nothing user-facing reaches left of `kpi_rollups`.** LiveViews read the ETS cache; the cache is
+written by one broadcaster; the broadcaster reads rollups. No page ever touches LangSmith, `runs`, or
+`kpi_observations`, so load on the database and on LangSmith is independent of how many people are
+looking.
+
+**Runs and feedback are polled separately.** Feedback is written *after* the run it attaches to, so a
+shared cursor would either stall run ingestion behind a slow evaluator or advance past feedback that
+had not landed yet.
+
+**The derived pass writes to `kpi_rollups`, not `kpi_observations`.** A drift value belongs to a
+bucket, not to any single run — there is no run to attach it to.
+
 ## Working on this project
 
 Design decisions here are deliberate and easy to undo by accident. Before making
@@ -30,6 +119,28 @@ backpressure story.
 A fourth *source* (not a fourth kind) is `:imported` — scores LangSmith's own online evaluators
 computed, pulled in through the feedback API. These land in the same table as judged values and
 flow through the same rollup path.
+
+```mermaid
+flowchart LR
+    RUN(["A run arrives"])
+    BUCKET(["A bucket closes"])
+
+    RUN -->|arithmetic on the payload| EX["extracted"]
+    RUN -->|LangSmith evaluator| IM["imported"]
+    RUN -->|our own model call| JU["judged"]
+    BUCKET -->|other KPIs' rollups| DE["derived"]
+
+    EX --> OBS[("kpi_observations")]
+    IM --> OBS
+    JU --> OBS
+    OBS --> ROLL["Rollup"]
+    ROLL --> RUP[("kpi_rollups")]
+    DE --> RUP
+```
+
+Three of the four routes converge on `kpi_observations` because they describe a *run*. `derived` goes
+straight to `kpi_rollups` because it describes a *bucket*, and `kpi_observations.source` is
+deliberately limited to the three ways a per-run value can arise.
 
 ## Agent identity
 
