@@ -1,3 +1,38 @@
+# AgentLens — agent instructions
+
+## Read these first
+
+This project makes a number of deliberate design decisions that are easy to
+undo by accident, because the alternatives all look reasonable. Before changing
+anything, read the guideline document for the area you are touching:
+
+- **[docs/backend-guidelines.md](docs/backend-guidelines.md)** — architecture,
+  the KPI abstraction, ingestion, rollups, retention, and the invariants that
+  keep the dashboard honest.
+- **[docs/frontend-guidelines.md](docs/frontend-guidelines.md)** — the design
+  system, how good and bad are encoded, component and LiveView rules.
+
+Both end in a checklist. Use it.
+
+Two rules govern almost everything, and are worth knowing before you read
+anything else:
+
+1. **Absent is not zero.** Every layer distinguishes "we measured and it was
+   zero" from "we have nothing". A `:skip`, an `:unknown`, an em dash, a gap in
+   a chart — these are all the same principle. Collapsing any of them into a
+   zero or a green badge is how this dashboard would end up confidently wrong,
+   which is worse than being unavailable.
+2. **Adding a KPI is one new module plus one config line.** Every abstraction in
+   the backend exists to protect that, and `mix test` enforces it. If your change
+   would make adding a KPI require touching a second place, the abstraction has
+   leaked and the change needs rethinking.
+
+When a guideline and your instinct disagree, the guidelines usually record a
+mistake that was already made once. Prefer them, or change them deliberately and
+say why in the commit.
+
+---
+
 This is a web application written using the Phoenix web framework.
 
 ## Project guidelines

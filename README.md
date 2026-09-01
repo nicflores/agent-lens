@@ -4,6 +4,18 @@ An observability platform for AI agents. AgentLens reads agent telemetry from
 [LangSmith](https://smith.langchain.com), computes KPIs over time, stores them in Postgres, and
 renders them per-agent in a Phoenix LiveView dashboard.
 
+## Working on this project
+
+Design decisions here are deliberate and easy to undo by accident. Before making
+changes — whether by hand or with an AI assistant — read:
+
+- **[docs/backend-guidelines.md](docs/backend-guidelines.md)** — architecture, the KPI abstraction,
+  ingestion, rollups, retention, and the invariants that keep the dashboard honest
+- **[docs/frontend-guidelines.md](docs/frontend-guidelines.md)** — the design system, how good and
+  bad are encoded, component and LiveView rules
+
+[AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) point AI assistants at both.
+
 ## Core idea: three kinds of KPI
 
 "KPI" covers three things with very different cost profiles, and each gets its own scheduler and
