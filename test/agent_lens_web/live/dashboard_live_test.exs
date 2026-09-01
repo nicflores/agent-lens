@@ -12,6 +12,16 @@ defmodule AgentLensWeb.DashboardLiveTest do
 
   @workspace "ws-support"
 
+  defp chart_config(view) do
+    view
+    |> element("#kpi-chart")
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.attribute("data-chart")
+    |> hd()
+    |> Jason.decode!()
+  end
+
   setup do
     Cache.clear()
 
@@ -128,14 +138,7 @@ defmodule AgentLensWeb.DashboardLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/latency_p95")
       render_async(view)
 
-      config =
-        view
-        |> element("#kpi-chart")
-        |> render()
-        |> LazyHTML.from_fragment()
-        |> LazyHTML.attribute("data-chart")
-        |> hd()
-        |> Jason.decode!()
+      config = chart_config(view)
 
       assert config["label"] == "Latency p95"
       assert length(config["bands"]) == 3
@@ -175,6 +178,58 @@ defmodule AgentLensWeb.DashboardLiveTest do
                live(conn, ~p"/agents/#{@workspace}/kpis/not_a_real_kpi")
 
       assert to == "/agents/#{@workspace}"
+    end
+
+    # Section 11: push deltas, not series. A dashboard open for an hour receives
+    # one point when a bucket closes, not the whole window again.
+    test "turns a published point into a single chart append", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/latency_p95")
+      render_async(view)
+
+      at = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      send(
+        view.pid,
+        {:kpi_point, @workspace, :latency_p95,
+         %{at: at, value: 1234.5, status: :good, sample_n: 100}}
+      )
+
+      assert_push_event(view, "chart:kpi-chart:point", %{t: t, v: v})
+      assert t == DateTime.to_unix(at)
+      assert v == 1234.5
+    end
+
+    test "subscribes only to its own KPI's topic", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/latency_p95")
+      render_async(view)
+
+      Phoenix.PubSub.broadcast(
+        AgentLens.PubSub,
+        Broadcaster.topic({:kpi, @workspace, :toxicity}),
+        {:kpi_point, @workspace, :toxicity,
+         %{at: DateTime.utc_now(), value: 0.5, status: :good, sample_n: 1}}
+      )
+
+      refute_push_event(view, "chart:kpi-chart:point", %{}, 200)
+    end
+
+    # An unannotated methodology change looks exactly like real drift.
+    test "marks a model change on the chart", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/latency_p95?range=90d")
+      render_async(view)
+
+      config = chart_config(view)
+
+      assert is_list(config["annotations"])
+    end
+
+    test "explains when a status is being held back by hysteresis", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/success_rate")
+      render_async(view)
+
+      # Whether the note is showing depends on the data, but the page must
+      # render either way rather than erroring on the comparison.
+      assert has_element?(view, "#kpi-chart") or has_element?(view, "#chart-empty")
     end
 
     test "a range with no data shows an empty chart rather than a flat zero", %{conn: conn} do

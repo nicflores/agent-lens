@@ -12,6 +12,14 @@ defmodule AgentLens.BroadcasterTest do
   @workspace "ws-support"
   @now ~U[2026-08-30 00:00:00.000000Z]
 
+  defp flush do
+    receive do
+      _message -> flush()
+    after
+      0 -> :ok
+    end
+  end
+
   setup do
     Cache.clear()
 
@@ -91,9 +99,40 @@ defmodule AgentLens.BroadcasterTest do
       refute_receive {:agent_updated, _}, 200
     end
 
+    # Section 11 again, from the writer's side: a refresh that changes nothing
+    # must put nothing on the wire.
+    test "publishes a per-KPI point when one changes" do
+      :ok = Broadcaster.subscribe({:kpi, @workspace, :latency_p95})
+
+      {:ok, _} = Broadcaster.refresh()
+
+      Repo.update_all(
+        from(r in KpiRollup, where: r.kpi_slug == "latency_p95"),
+        set: [p95: 9_999.0]
+      )
+
+      {:ok, _} = Broadcaster.refresh()
+
+      assert_receive {:kpi_point, @workspace, :latency_p95, %{value: 9_999.0}}, 1_000
+    end
+
+    test "says nothing when a refresh changes nothing" do
+      :ok = Broadcaster.subscribe({:kpi, @workspace, :latency_p95})
+
+      {:ok, _} = Broadcaster.refresh()
+      flush()
+
+      {:ok, _} = Broadcaster.refresh()
+
+      refute_receive {:kpi_point, _agent, _slug, _point}, 200
+    end
+
     test "topics are distinct per agent" do
       refute Broadcaster.topic({:agent, "a"}) == Broadcaster.topic({:agent, "b"})
       refute Broadcaster.topic(:overview) == Broadcaster.topic({:agent, "a"})
+
+      refute Broadcaster.topic({:kpi, "a", :toxicity}) ==
+               Broadcaster.topic({:kpi, "a", :latency_p95})
     end
   end
 

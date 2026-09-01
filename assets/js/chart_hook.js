@@ -115,12 +115,25 @@ export const ChartHook = {
       attributeFilter: ["data-theme"],
     })
 
-    // Phase 7 pushes single points on bucket close rather than resending the
-    // whole series.
-    this.handleEvent(`chart:${this.el.id}:append`, ({ t, v }) => {
+    // A closed bucket arrives as a single point rather than a fresh series.
+    //
+    // The current bucket is still accumulating, so the same timestamp can
+    // arrive repeatedly with a moving value: match on the timestamp and
+    // replace, otherwise append. Treating every message as an append would
+    // draw the same bucket several times over.
+    this.handleEvent(`chart:${this.el.id}:point`, ({ t, v }) => {
       if (!this.chart) return
+
       const [xs, ys] = this.chart.data
-      this.chart.setData([[...xs, t], [...ys, v]])
+      const last = xs.length - 1
+
+      if (last >= 0 && xs[last] === t) {
+        const nextYs = ys.slice()
+        nextYs[last] = v
+        this.chart.setData([xs, nextYs])
+      } else {
+        this.chart.setData([[...xs, t], [...ys, v]])
+      }
     })
   },
 

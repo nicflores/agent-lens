@@ -95,6 +95,26 @@ defmodule AgentLens.Kpi.Status do
   defp uniform?([first | rest]), do: Enum.all?(rest, &(&1 == first))
 
   @doc """
+  Folds hysteresis over a whole series, oldest first, returning the settled
+  status.
+
+  This is what the read path actually needs. It does not remember a previous
+  status between requests — it has a list of buckets — so the damping is
+  replayed from the start of the window each time. That also makes the result
+  deterministic: the same buckets always settle to the same status, with no
+  hidden state to drift out of step.
+  """
+  @spec stabilize([t()], pos_integer()) :: t() | nil
+  def stabilize(statuses, consecutive_required) do
+    statuses
+    |> Enum.reduce({nil, []}, fn status, {settled, seen} ->
+      seen = [status | seen]
+      {apply_hysteresis(settled, seen, consecutive_required), seen}
+    end)
+    |> elem(0)
+  end
+
+  @doc """
   Rolls per-KPI statuses up into a single agent-level status.
 
   Takes the worst status among KPIs that contribute to health. KPIs whose

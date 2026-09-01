@@ -117,6 +117,46 @@ defmodule AgentLens.Kpi.StatusTest do
     end
   end
 
+  # Folding hysteresis over a whole series, which is what the read path needs:
+  # it has buckets, not a remembered previous status.
+  describe "stabilize/2" do
+    test "adopts the first status when there is no history to damp against" do
+      assert :good = Status.stabilize([:good], 3)
+    end
+
+    test "ignores a single bucket crossing a threshold" do
+      assert :good = Status.stabilize([:good, :good, :good, :critical], 3)
+    end
+
+    test "ignores an oscillation around a boundary" do
+      assert :good = Status.stabilize([:good, :warning, :good, :warning, :good, :warning], 3)
+    end
+
+    test "flips once the crossing is sustained" do
+      assert :critical = Status.stabilize([:good, :good, :critical, :critical, :critical], 3)
+    end
+
+    test "flips back when recovery is sustained" do
+      statuses = [:critical, :critical, :critical, :good, :good, :good]
+
+      assert :good = Status.stabilize(statuses, 3)
+    end
+
+    test "holds through a recovery that is not yet convincing" do
+      statuses = [:critical, :critical, :critical, :good, :good]
+
+      assert :critical = Status.stabilize(statuses, 3)
+    end
+
+    test "a run length of one means no damping at all" do
+      assert :critical = Status.stabilize([:good, :good, :critical], 1)
+    end
+
+    test "has nothing to say about an empty series" do
+      assert nil == Status.stabilize([], 3)
+    end
+  end
+
   describe "roll_up/1 for the agent-level badge" do
     test "takes the worst contributing status" do
       assert :critical =

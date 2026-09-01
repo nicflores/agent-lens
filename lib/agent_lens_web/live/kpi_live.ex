@@ -11,6 +11,7 @@ defmodule AgentLensWeb.KpiLive do
 
   use AgentLensWeb, :live_view
 
+  alias AgentLens.Broadcaster
   alias AgentLens.Kpi.Registry
   alias AgentLens.Query
   alias AgentLensWeb.ChartConfig
@@ -22,12 +23,17 @@ defmodule AgentLensWeb.KpiLive do
 
     case Registry.fetch_definition(registry, safe_slug(slug)) do
       {:ok, definition} ->
+        if connected?(socket) do
+          :ok = Broadcaster.subscribe({:kpi, agent_id, definition.slug})
+        end
+
         {:ok,
          socket
          |> assign(:agent_id, agent_id)
          |> assign(:definition, definition)
          |> assign(:page_title, "#{definition.name} · #{agent_id}")
-         |> assign(:reading, Query.latest(agent_id, definition.slug))
+         |> assign(:reading, Query.latest(agent_id, definition.slug, hysteresis: 3))
+         |> assign(:annotations, [])
          |> assign(:series, %{points: [], granularity: nil, downsampled?: false})
          |> assign(:loading?, true)
          |> assign(:drawer_open?, false)}
@@ -61,9 +67,29 @@ defmodule AgentLensWeb.KpiLive do
     {:noreply, push_patch(socket, to: kpi_path(socket, methodology: methodology))}
   end
 
+  # A closed bucket arrives as one point, not a fresh series. The client holds
+  # everything before it already.
   @impl true
-  def handle_async(:series, {:ok, series}, socket) do
-    {:noreply, socket |> assign(:series, series) |> assign(:loading?, false)}
+  def handle_info({:kpi_point, _agent_id, _slug, point}, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       :reading,
+       Query.latest(socket.assigns.agent_id, socket.assigns.definition.slug, hysteresis: 3)
+     )
+     |> push_event("chart:kpi-chart:point", %{
+       t: DateTime.to_unix(point.at),
+       v: point.value
+     })}
+  end
+
+  @impl true
+  def handle_async(:series, {:ok, %{series: series, annotations: annotations}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:series, series)
+     |> assign(:annotations, annotations)
+     |> assign(:loading?, false)}
   end
 
   def handle_async(:series, {:exit, _reason}, socket) do
@@ -78,7 +104,12 @@ defmodule AgentLensWeb.KpiLive do
 
     socket
     |> assign(:loading?, true)
-    |> start_async(:series, fn -> Query.series(agent_id, slug, from, to) end)
+    |> start_async(:series, fn ->
+      %{
+        series: Query.series(agent_id, slug, from, to),
+        annotations: Query.annotations(agent_id, slug, from, to)
+      }
+    end)
   end
 
   # State lives in the URL, so every view of this page is a shareable link and
@@ -185,7 +216,12 @@ defmodule AgentLensWeb.KpiLive do
                 id="kpi-chart"
                 phx-hook="ChartHook"
                 phx-update="ignore"
-                data-chart={ChartConfig.to_json(@definition, @series, status: @reading.status)}
+                data-chart={
+                  ChartConfig.to_json(@definition, @series,
+                    status: @reading.status,
+                    annotations: @annotations
+                  )
+                }
                 class="w-full"
               />
 
@@ -200,6 +236,17 @@ defmodule AgentLensWeb.KpiLive do
                   Nothing is plotted where nothing was measured, rather than drawing a zero.
                 </p>
               </div>
+
+              <p
+                :if={@reading.raw_status != @reading.status}
+                id="hysteresis-note"
+                class="mt-2 flex items-center gap-1.5 text-xs text-al-ink-soft"
+              >
+                <span class="hero-clock size-3.5" aria-hidden="true" />
+                Latest bucket reads {String.downcase(status_label(@reading.raw_status))}. Held at {String.downcase(
+                  status_label(@reading.status)
+                )} until the change is sustained.
+              </p>
 
               <p
                 :if={@series.downsampled?}

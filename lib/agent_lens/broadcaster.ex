@@ -44,16 +44,20 @@ defmodule AgentLens.Broadcaster do
       "dashboard:agent:ws-support"
 
   """
-  @spec topic(:overview | {:agent, String.t()}) :: String.t()
+  @spec topic(target()) :: String.t()
   def topic(:overview), do: "dashboard:overview"
   def topic({:agent, agent_id}), do: "dashboard:agent:#{agent_id}"
+  def topic({:kpi, agent_id, slug}), do: "dashboard:kpi:#{agent_id}:#{slug}"
+
+  @typedoc "What a client can subscribe to."
+  @type target :: :overview | {:agent, String.t()} | {:kpi, String.t(), atom()}
 
   @doc "Subscribes the calling process to updates."
-  @spec subscribe(:overview | {:agent, String.t()}) :: :ok | {:error, term()}
+  @spec subscribe(target()) :: :ok | {:error, term()}
   def subscribe(target), do: Phoenix.PubSub.subscribe(@pubsub, topic(target))
 
   @doc "Unsubscribes the calling process."
-  @spec unsubscribe(:overview | {:agent, String.t()}) :: :ok
+  @spec unsubscribe(target()) :: :ok
   def unsubscribe(target), do: Phoenix.PubSub.unsubscribe(@pubsub, topic(target))
 
   @doc """
@@ -110,7 +114,10 @@ defmodule AgentLens.Broadcaster do
       interval: Keyword.get(opts, :interval, @default_interval),
       refreshes: 0,
       failures: 0,
-      last_refresh_at: nil
+      last_refresh_at: nil,
+      # Last point published per {agent, slug}, so a refresh can send just what
+      # changed instead of the whole series.
+      published: %{}
     }
 
     _timer = if Keyword.get(opts, :start_timer, false), do: schedule(state)
@@ -122,7 +129,7 @@ defmodule AgentLens.Broadcaster do
   def handle_call(:refresh, _from, state) do
     case compute_and_publish() do
       {:ok, overview} ->
-        {:reply, {:ok, overview}, bump(state)}
+        {:reply, {:ok, overview}, state |> publish_deltas(overview) |> bump()}
 
       {:error, _reason} = error ->
         {:reply, error, %{state | failures: state.failures + 1}}
@@ -135,8 +142,8 @@ defmodule AgentLens.Broadcaster do
   def handle_info(:refresh, state) do
     state =
       case compute_and_publish() do
-        {:ok, _overview} ->
-          bump(state)
+        {:ok, overview} ->
+          state |> publish_deltas(overview) |> bump()
 
         {:error, reason} ->
           Logger.warning("dashboard refresh failed: #{inspect(reason)}")
@@ -168,6 +175,41 @@ defmodule AgentLens.Broadcaster do
     {:ok, overview}
   rescue
     exception -> {:error, exception}
+  end
+
+  # Section 11: push deltas, not series. A dashboard that has been open for an
+  # hour should receive one point when a bucket closes, not the whole window
+  # again — and the client already holds everything before it.
+  #
+  # Sends on a *changed* point rather than only a new bucket, because the
+  # current bucket keeps accumulating: its value moves while its timestamp
+  # stays put, and the client needs to replace rather than append.
+  defp publish_deltas(state, overview) do
+    Enum.reduce(overview.agents, state, fn summary, acc ->
+      Enum.reduce(summary.kpis, acc, fn kpi, inner ->
+        maybe_publish_point(inner, summary.agent_id, kpi)
+      end)
+    end)
+  end
+
+  defp maybe_publish_point(state, _agent_id, %{at: nil}), do: state
+
+  defp maybe_publish_point(state, agent_id, kpi) do
+    key = {agent_id, kpi.slug}
+    point = %{at: kpi.at, value: kpi.value, status: kpi.status, sample_n: kpi.sample_n}
+
+    if Map.get(state.published, key) == point do
+      state
+    else
+      :ok =
+        Phoenix.PubSub.broadcast(
+          @pubsub,
+          topic({:kpi, agent_id, kpi.slug}),
+          {:kpi_point, agent_id, kpi.slug, point}
+        )
+
+      %{state | published: Map.put(state.published, key, point)}
+    end
   end
 
   defp bump(state),

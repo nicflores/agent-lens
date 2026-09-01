@@ -182,6 +182,8 @@ defmodule AgentLens.Query do
         unknown(definition.slug, definition)
 
       {granularity, %{at: at, value: value, sample_n: sample_n} = bucket} ->
+        raw = Status.evaluate(definition, value, sample_n: sample_n)
+
         %{
           slug: definition.slug,
           definition: definition,
@@ -190,9 +192,120 @@ defmodule AgentLens.Query do
           value: value,
           sample_n: sample_n,
           population_n: bucket.population_n,
-          status: Status.evaluate(definition, value, sample_n: sample_n)
+          raw_status: raw,
+          status: damped_status(agent_id, definition, granularity, raw, opts)
         }
     end
+  end
+
+  # Section 12's hysteresis: require several consecutive buckets past a
+  # threshold before the badge moves.
+  #
+  # A KPI sitting on its boundary will otherwise flip on every refresh, and a
+  # dashboard that flickers is one people stop reading — which costs far more
+  # than being a bucket or two late to a genuine transition. Off unless the
+  # caller asks, so the raw judgement is always available underneath.
+  defp damped_status(agent_id, definition, granularity, raw, opts) do
+    case Keyword.get(opts, :hysteresis) do
+      nil ->
+        raw
+
+      required when is_integer(required) and required > 1 ->
+        repo = Keyword.get(opts, :repo, Repo)
+        window = Keyword.get(opts, :hysteresis_window, required * 4)
+
+        agent_id
+        |> recent_statuses(definition, granularity, window, repo)
+        |> Status.stabilize(required)
+        |> Kernel.||(raw)
+
+      _one ->
+        raw
+    end
+  end
+
+  defp recent_statuses(agent_id, definition, granularity, limit, repo) do
+    %{rows: rows} =
+      repo.query!(
+        """
+        SELECT #{Rollup.value_expression(definition.aggregation)}, sample_n
+        FROM kpi_rollups
+        WHERE agent_id = $1 AND kpi_slug = $2 AND granularity = $3 AND count > 0
+        ORDER BY bucket_start DESC
+        LIMIT $4
+        """,
+        [agent_id, to_string(definition.slug), to_string(granularity), limit]
+      )
+
+    rows
+    |> Enum.reverse()
+    |> Enum.map(fn [value, sample_n] ->
+      Status.evaluate(definition, value, sample_n: sample_n)
+    end)
+  end
+
+  @doc """
+  Events inside a window that changed what a KPI's numbers mean.
+
+  A model swap or a bumped KPI version shifts the measurement itself, and on a
+  chart that is indistinguishable from the agent genuinely changing behaviour.
+  Marking them is what stops someone investigating a regression that never
+  happened.
+
+  The state already in force at the start of the window is not a change, so it
+  is not annotated.
+  """
+  @spec annotations(String.t(), atom(), DateTime.t(), DateTime.t(), keyword()) :: [map()]
+  def annotations(agent_id, kpi_slug, from, to, opts \\ []) do
+    registry = registry(opts)
+
+    case Registry.fetch_definition(registry, kpi_slug) do
+      :error ->
+        []
+
+      {:ok, definition} ->
+        repo = Keyword.get(opts, :repo, Repo)
+
+        (model_changes(repo, agent_id, from, to) ++
+           version_changes(repo, agent_id, definition, from, to))
+        |> Enum.sort_by(& &1.at, DateTime)
+    end
+  end
+
+  defp model_changes(repo, agent_id, from, to) do
+    %{rows: rows} =
+      repo.query!(
+        """
+        SELECT model, min(start_time)
+        FROM runs
+        WHERE agent_id = $1 AND start_time >= $2 AND start_time < $3 AND model IS NOT NULL
+        GROUP BY model
+        ORDER BY 2
+        """,
+        [agent_id, from, to]
+      )
+
+    rows
+    |> Enum.drop(1)
+    |> Enum.map(fn [model, at] -> %{at: at, label: "model → #{model}", kind: :model} end)
+  end
+
+  defp version_changes(repo, agent_id, definition, from, to) do
+    %{rows: rows} =
+      repo.query!(
+        """
+        SELECT kpi_version, min(occurred_at)
+        FROM kpi_observations
+        WHERE agent_id = $1 AND kpi_slug = $2 AND occurred_at >= $3 AND occurred_at < $4
+        GROUP BY kpi_version
+        ORDER BY 2
+        """,
+        [agent_id, to_string(definition.slug), from, to]
+      )
+
+    rows
+    |> Enum.drop(1)
+    |> Enum.map(fn [version, at] -> %{at: at, label: "v#{version}", kind: :version} end)
   end
 
   # A derived KPI only ever has day buckets; everything else is tried finest
@@ -253,6 +366,7 @@ defmodule AgentLens.Query do
       value: nil,
       sample_n: 0,
       population_n: 0,
+      raw_status: :unknown,
       status: :unknown
     }
   end
