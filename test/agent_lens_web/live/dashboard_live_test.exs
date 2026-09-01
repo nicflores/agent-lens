@@ -7,10 +7,18 @@ defmodule AgentLensWeb.DashboardLiveTest do
   alias AgentLens.Cache
   alias AgentLens.Ingestion.FeedbackImporter
   alias AgentLens.Ingestion.RunImporter
+  alias AgentLens.Kpi.Catalog
+  alias AgentLens.Kpi.Registry
   alias AgentLens.LangSmith.Mock
   alias AgentLens.Rollup
+  alias AgentLens.Thresholds
 
   @workspace "ws-support"
+
+  defp definition(slug) do
+    {:ok, definition} = Registry.fetch_definition(Registry.load!(), slug)
+    definition
+  end
 
   defp chart_config(view) do
     view
@@ -24,6 +32,7 @@ defmodule AgentLensWeb.DashboardLiveTest do
 
   setup do
     Cache.clear()
+    {:ok, _count} = Catalog.sync!(Registry.load!())
 
     now = DateTime.utc_now()
     since = DateTime.add(now, -3, :day)
@@ -230,6 +239,55 @@ defmodule AgentLensWeb.DashboardLiveTest do
       # Whether the note is showing depends on the data, but the page must
       # render either way rather than erroring on the comparison.
       assert has_element?(view, "#kpi-chart") or has_element?(view, "#chart-empty")
+    end
+
+    # Thresholds are configuration, not code: the right limit for a
+    # customer-facing agent is wrong for an internal one.
+    test "saves a per-agent threshold override", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/toxicity")
+      render_async(view)
+
+      view
+      |> form("#threshold-form", thresholds: %{warning: "0.25", critical: "0.45"})
+      |> render_submit()
+
+      assert %{toxicity: %{warning: 0.25, critical: 0.45}} = Thresholds.for_agent(@workspace)
+      assert has_element?(view, "#override-badge")
+    end
+
+    test "restores the shipped defaults", %{conn: conn} do
+      {:ok, _} =
+        Thresholds.put(@workspace, definition(:toxicity), %{warning: 0.25, critical: 0.45})
+
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/toxicity")
+      render_async(view)
+
+      view |> element("#reset-thresholds") |> render_click()
+
+      assert Thresholds.for_agent(@workspace) == %{}
+      refute has_element?(view, "#override-badge")
+    end
+
+    test "refuses an override that contradicts the KPI's direction", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/toxicity")
+      render_async(view)
+
+      html =
+        view
+        |> form("#threshold-form", thresholds: %{warning: "0.9", critical: "0.1"})
+        |> render_submit()
+
+      assert html =~ "warning"
+      assert Thresholds.for_agent(@workspace) == %{}
+    end
+
+    # A banded KPI gets band inputs, not a warning/critical pair.
+    test "offers band inputs for a banded KPI", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents/#{@workspace}/kpis/sentiment")
+      render_async(view)
+
+      assert has_element?(view, "#threshold-form input[name='thresholds[good_low]']")
+      refute has_element?(view, "#threshold-form input[name='thresholds[critical]']")
     end
 
     test "a range with no data shows an empty chart rather than a flat zero", %{conn: conn} do

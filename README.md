@@ -70,12 +70,25 @@ symbolically via `AgentLens.LangSmith.Mock.anomalies/0`:
 | Toxicity regression | 0.02 → 0.16 at a simulated model version change, and does **not** recover |
 | Cost creep | Per-run cost drifting steadily upward across the window |
 
+The client is chosen by whether a real LangSmith is actually configured: set `LANGSMITH_API_KEY`
+and it uses the HTTP client, leave it unset and it uses the mock. A deploy that has lost its
+credentials therefore degrades rather than crashing — and the dashboard shows a **Mock data**
+badge, because invented numbers must never be mistaken for measured ones.
+
 | Variable | Default | Notes |
 |---|---|---|
-| `LANGSMITH_CLIENT` | `mock` (`http` in prod) | selects the client implementation |
-| `LANGSMITH_API_KEY` | — | required only when the client is `http` |
+| `LANGSMITH_API_KEY` | — | present ⇒ real client; absent ⇒ mock |
 | `LANGSMITH_ENDPOINT` | `https://api.smith.langchain.com` | override for self-hosted |
-| `LANGSMITH_WORKSPACES` | — | comma-separated workspace ids, one per agent |
+| `LANGSMITH_WORKSPACES` | three sample ids under the mock | comma-separated, one per agent |
+| `LANGSMITH_CLIENT` | — | `http` or `mock` to override the automatic choice |
+| `LITELLM_ENDPOINT` | — | present ⇒ the judge tier reaches a real model |
+| `LITELLM_API_KEY` | — | bearer token for the proxy |
+| `LITELLM_MODEL` | `gpt-4o-mini` | model the judge asks for |
+
+> The HTTP client has been built and tested against stubbed responses but **never against a live
+> LangSmith**. Its endpoint paths and response field names are gathered at the top of
+> `AgentLens.LangSmith.HTTP` so they can be corrected in one place; see that module's docs for
+> what to verify first.
 
 ## Quality gates
 
@@ -86,9 +99,8 @@ mix dialyzer
 
 ## Status
 
-Phases 0–5 of an eight-phase build are complete: scaffold, domain core, schema, ingestion,
-rollups, and the read path. What remains is the UI (Phase 6), live delta pushes (Phase 7), and the
-real LangSmith HTTP client (Phase 8).
+All eight phases are complete: scaffold, domain core, schema, ingestion, rollups, read path, UI,
+live updates, and the real LangSmith client.
 
 The pieces that exist today:
 
@@ -99,3 +111,8 @@ The pieces that exist today:
 - Tiered rollups (minute / hour / day) and a derived pass computing PSI drift.
 - An ETS-cached read path behind a single broadcaster: a cached overview read is ~29µs against
   ~84ms uncached, so twenty open dashboards cost about what one does.
+- Three LiveViews with URL-driven state, bullet-chart cards, threshold-banded charts, delta
+  pushes on bucket close, and hysteresis on status transitions.
+- A local judge tier behind Oban, so a KPI added today can be backfilled across the retention
+  window instead of starting from nothing.
+- Per-agent threshold overrides, editable without a deploy.

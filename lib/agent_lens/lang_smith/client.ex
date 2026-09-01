@@ -50,6 +50,16 @@ defmodule AgentLens.LangSmith.Client do
     |> Keyword.get(:client, AgentLens.LangSmith.Mock)
   end
 
+  @doc """
+  Whether the dashboard is showing generated data rather than real telemetry.
+
+  Falling back to the mock when LangSmith is not configured keeps a deploy
+  running, but numbers that were invented must never be presented as though
+  they were measured. The UI says so.
+  """
+  @spec mock?() :: boolean()
+  def mock?, do: impl() == AgentLens.LangSmith.Mock
+
   @doc "The workspaces to poll, one per agent."
   @spec workspaces() :: [workspace()]
   def workspaces do

@@ -14,6 +14,7 @@ defmodule AgentLensWeb.KpiLive do
   alias AgentLens.Broadcaster
   alias AgentLens.Kpi.Registry
   alias AgentLens.Query
+  alias AgentLens.Thresholds
   alias AgentLensWeb.ChartConfig
   alias AgentLensWeb.TimeRange
 
@@ -34,6 +35,7 @@ defmodule AgentLensWeb.KpiLive do
          |> assign(:page_title, "#{definition.name} · #{agent_id}")
          |> assign(:reading, Query.latest(agent_id, definition.slug, hysteresis: 3))
          |> assign(:annotations, [])
+         |> assign_thresholds(agent_id, definition)
          |> assign(:series, %{points: [], granularity: nil, downsampled?: false})
          |> assign(:loading?, true)
          |> assign(:drawer_open?, false)}
@@ -55,6 +57,36 @@ defmodule AgentLensWeb.KpiLive do
      |> assign(:range, range)
      |> assign(:drawer_open?, params["methodology"] == "open")
      |> load_series(range)}
+  end
+
+  @impl true
+  def handle_event("save_thresholds", %{"thresholds" => params}, socket) do
+    definition = socket.assigns.definition
+
+    case Thresholds.put(socket.assigns.agent_id, definition, parse_thresholds(definition, params),
+           updated_by: "dashboard"
+         ) do
+      {:ok, _record} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Thresholds updated for this agent.")
+         |> reload_thresholds()}
+
+      {:error, %Ecto.Changeset{}} ->
+        {:noreply, put_flash(socket, :error, "Could not save those thresholds.")}
+
+      {:error, reason} when is_binary(reason) ->
+        {:noreply, put_flash(socket, :error, reason)}
+    end
+  end
+
+  def handle_event("reset_thresholds", _params, socket) do
+    :ok = Thresholds.delete(socket.assigns.agent_id, socket.assigns.definition.slug)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Restored the shipped defaults.")
+     |> reload_thresholds()}
   end
 
   @impl true
@@ -96,6 +128,68 @@ defmodule AgentLensWeb.KpiLive do
     {:noreply,
      socket |> assign(:loading?, false) |> put_flash(:error, "Could not load this range.")}
   end
+
+  # The definition held in socket state carries the *effective* thresholds, so
+  # the chart bands, the bullet chart and the status badge all move together
+  # the moment an override is saved.
+  defp assign_thresholds(socket, agent_id, definition) do
+    overrides = Thresholds.for_agent(agent_id)
+    effective = Thresholds.apply_override(definition, overrides)
+
+    socket
+    |> assign(:definition, effective)
+    |> assign(:overridden?, Map.has_key?(overrides, definition.slug))
+    |> assign(:threshold_form, to_form(threshold_params(effective), as: :thresholds))
+  end
+
+  defp reload_thresholds(socket) do
+    {:ok, shipped} =
+      Registry.fetch_definition(Registry.load!(), socket.assigns.definition.slug)
+
+    socket
+    |> assign_thresholds(socket.assigns.agent_id, shipped)
+    |> then(fn updated ->
+      assign(
+        updated,
+        :reading,
+        Query.latest(updated.assigns.agent_id, updated.assigns.definition.slug, hysteresis: 3)
+      )
+    end)
+  end
+
+  defp threshold_params(%{direction: :target_band, thresholds: t}) do
+    %{good: {good_low, good_high}, warning: {warn_low, warn_high}} = t
+
+    %{
+      "good_low" => good_low,
+      "good_high" => good_high,
+      "warning_low" => warn_low,
+      "warning_high" => warn_high
+    }
+  end
+
+  defp threshold_params(%{thresholds: t}),
+    do: %{"warning" => t.warning, "critical" => t.critical}
+
+  defp parse_thresholds(%{direction: :target_band}, params) do
+    %{
+      good: {number(params["good_low"]), number(params["good_high"])},
+      warning: {number(params["warning_low"]), number(params["warning_high"])}
+    }
+  end
+
+  defp parse_thresholds(_definition, params),
+    do: %{warning: number(params["warning"]), critical: number(params["critical"])}
+
+  defp number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, _rest} -> number
+      :error -> 0.0
+    end
+  end
+
+  defp number(value) when is_number(value), do: value * 1.0
+  defp number(_other), do: 0.0
 
   defp load_series(socket, range) do
     agent_id = socket.assigns.agent_id
@@ -276,12 +370,20 @@ defmodule AgentLensWeb.KpiLive do
             </div>
           </div>
 
-          <.methodology_drawer
-            definition={@definition}
-            reading={@reading}
-            series={@series}
-            open?={@drawer_open?}
-          />
+          <div class="flex flex-col gap-4">
+            <.methodology_drawer
+              definition={@definition}
+              reading={@reading}
+              series={@series}
+              open?={@drawer_open?}
+            />
+
+            <.threshold_editor
+              definition={@definition}
+              form={@threshold_form}
+              overridden?={@overridden?}
+            />
+          </div>
         </div>
       </div>
     </Layouts.app>
@@ -350,6 +452,71 @@ defmodule AgentLensWeb.KpiLive do
         Open the methodology panel for the full definition.
       </p>
     </aside>
+    """
+  end
+
+  attr :definition, :map, required: true
+  attr :form, :map, required: true
+  attr :overridden?, :boolean, required: true
+
+  defp threshold_editor(assigns) do
+    ~H"""
+    <section id="threshold-editor" class="rounded-xl border border-al-line bg-al-panel p-4">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <h2 class="text-sm font-semibold text-al-ink">Thresholds for this agent</h2>
+          <p class="mt-1 text-xs text-al-ink-soft">
+            The right limit for a customer-facing agent is wrong for an internal one. Tuning here
+            takes effect immediately, with no deploy.
+          </p>
+        </div>
+        <span
+          :if={@overridden?}
+          id="override-badge"
+          class="shrink-0 rounded-full border border-al-accent/30 px-2 py-0.5 text-xs font-medium text-al-accent"
+        >
+          Overridden
+        </span>
+      </div>
+
+      <.form
+        for={@form}
+        id="threshold-form"
+        phx-submit="save_thresholds"
+        class="mt-3 flex flex-col gap-3"
+      >
+        <div :if={@definition.direction != :target_band} class="grid grid-cols-2 gap-3">
+          <.input field={@form[:warning]} type="number" step="any" label="Warning" />
+          <.input field={@form[:critical]} type="number" step="any" label="Critical" />
+        </div>
+
+        <div :if={@definition.direction == :target_band} class="grid grid-cols-2 gap-3">
+          <.input field={@form[:warning_low]} type="number" step="any" label="Critical below" />
+          <.input field={@form[:good_low]} type="number" step="any" label="Healthy from" />
+          <.input field={@form[:good_high]} type="number" step="any" label="Healthy to" />
+          <.input field={@form[:warning_high]} type="number" step="any" label="Critical above" />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="submit"
+            id="save-thresholds"
+            class="rounded-lg bg-al-accent px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90"
+          >
+            Save
+          </button>
+          <button
+            :if={@overridden?}
+            type="button"
+            id="reset-thresholds"
+            phx-click="reset_thresholds"
+            class="rounded-lg border border-al-line px-3 py-1.5 text-xs font-medium text-al-ink-soft transition hover:text-al-ink"
+          >
+            Restore defaults
+          </button>
+        </div>
+      </.form>
+    </section>
     """
   end
 

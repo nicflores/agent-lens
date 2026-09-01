@@ -46,6 +46,13 @@ config :agent_lens, Oban,
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
   ]
 
+# The tool's own model access, pointed at a LiteLLM proxy so routing, keys and
+# cost accounting stay where they already live. Falls back to a deterministic
+# mock, so dev and test cost nothing.
+config :agent_lens, :llm,
+  client: AgentLens.LLM.Mock,
+  model: "gpt-4o-mini"
+
 # Configure the endpoint
 config :agent_lens, AgentLensWeb.Endpoint,
   url: [host: "localhost"],

@@ -23,6 +23,7 @@ defmodule AgentLens.Query do
   alias AgentLens.Kpi.Status
   alias AgentLens.Repo
   alias AgentLens.Rollup
+  alias AgentLens.Thresholds
 
   @default_max_points 300
 
@@ -176,6 +177,14 @@ defmodule AgentLens.Query do
 
   defp latest_for(agent_id, definition, opts) do
     repo = Keyword.get(opts, :repo, Repo)
+
+    # Per-agent overrides apply wherever status is judged, not only on the page
+    # where they were entered.
+    definition =
+      Thresholds.apply_override(
+        definition,
+        Keyword.get_lazy(opts, :overrides, fn -> Thresholds.for_agent(agent_id, repo) end)
+      )
 
     case newest_bucket(repo, agent_id, definition, preferred_grains(definition, opts)) do
       nil ->
@@ -380,6 +389,14 @@ defmodule AgentLens.Query do
   @spec agent_summary(String.t(), keyword()) :: map()
   def agent_summary(agent_id, opts \\ []) do
     registry = registry(opts)
+
+    # Loaded once for the whole summary rather than per KPI.
+    overrides =
+      Keyword.get_lazy(opts, :overrides, fn ->
+        Thresholds.for_agent(agent_id, Keyword.get(opts, :repo, Repo))
+      end)
+
+    opts = Keyword.put(opts, :overrides, overrides)
 
     kpis =
       registry

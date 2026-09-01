@@ -177,19 +177,29 @@ defmodule AgentLens.Kpi.Catalog do
   defp decode_range(nil, nil), do: nil
   defp decode_range(min, max), do: {min, max}
 
-  defp encode_thresholds(%{good: {good_low, good_high}, warning: {warn_low, warn_high}}) do
+  @doc """
+  Encodes thresholds for `jsonb`.
+
+  A tuple has no JSON representation, so a banded threshold survives the trip
+  as a pair of lists. Shared with `AgentLens.Thresholds`, which stores overrides
+  in the same shape — two encoders would be two chances to disagree.
+  """
+  @spec encode_thresholds(map()) :: map()
+  def encode_thresholds(%{good: {good_low, good_high}, warning: {warn_low, warn_high}}) do
     %{"good" => [good_low, good_high], "warning" => [warn_low, warn_high]}
   end
 
-  defp encode_thresholds(%{warning: warning, critical: critical}) do
+  def encode_thresholds(%{warning: warning, critical: critical}) do
     %{"warning" => warning, "critical" => critical}
   end
 
-  defp decode_thresholds(%{"good" => [good_low, good_high], "warning" => [warn_low, warn_high]}) do
+  @doc "Decodes stored thresholds back into the shape the domain uses."
+  @spec decode_thresholds(map()) :: map()
+  def decode_thresholds(%{"good" => [good_low, good_high], "warning" => [warn_low, warn_high]}) do
     %{good: {good_low, good_high}, warning: {warn_low, warn_high}}
   end
 
-  defp decode_thresholds(%{"warning" => warning, "critical" => critical}) do
+  def decode_thresholds(%{"warning" => warning, "critical" => critical}) do
     %{warning: warning, critical: critical}
   end
 

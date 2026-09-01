@@ -71,6 +71,7 @@ defmodule AgentLensWeb.Layouts do
           </nav>
 
           <div class="ml-auto flex items-center gap-4">
+            <.mock_notice />
             {render_slot(@actions)}
             <.theme_toggle />
           </div>

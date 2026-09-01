@@ -18,6 +18,9 @@ defmodule AgentLens.Application do
         boot_child(),
         # Registry and DynamicSupervisor for the ingestion pollers. Always
         # started; whether any pollers run is a separate config decision.
+        # One shared budget in front of LangSmith, since rate limits are
+        # org-wide rather than per poller.
+        AgentLens.LangSmith.RateLimiter,
         AgentLens.Ingestion.Supervisor,
         {Oban, Application.fetch_env!(:agent_lens, Oban)},
         # Read-path: one ETS cache, and the single process that writes it.

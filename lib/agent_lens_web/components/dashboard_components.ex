@@ -407,6 +407,32 @@ defmodule AgentLensWeb.DashboardComponents do
   end
 
   @doc """
+  Says plainly when the dashboard is showing generated data.
+
+  Falling back to the mock keeps a misconfigured deploy running, which is
+  right. Letting anyone mistake invented numbers for real telemetry would not
+  be, so this is deliberately hard to miss.
+  """
+  attr :class, :string, default: nil
+
+  def mock_notice(assigns) do
+    ~H"""
+    <span
+      :if={AgentLens.LangSmith.Client.mock?()}
+      id="mock-data-notice"
+      class={[
+        "inline-flex items-center gap-1.5 rounded-full border border-status-warning/40",
+        "bg-status-warning-soft px-2.5 py-1 text-xs font-medium text-status-warning",
+        @class
+      ]}
+      title="No LangSmith is configured, so these figures are generated. Set LANGSMITH_API_KEY to read real telemetry."
+    >
+      <span class="hero-beaker size-3.5" aria-hidden="true" /> Mock data
+    </span>
+    """
+  end
+
+  @doc """
   Says how old the numbers are.
 
   A dashboard that shows stale figures without saying so is making the same

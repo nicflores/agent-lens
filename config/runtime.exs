@@ -33,6 +33,16 @@ config :agent_lens, AgentLensWeb.Endpoint,
 # The client implementation is chosen here rather than at compile time so that
 # dev and test run against the mock with no API key and no network access.
 
+# The client is chosen by whether a real LangSmith is actually configured.
+#
+# With no API key and endpoint there is nothing to talk to, so we fall back to
+# the mock rather than failing to boot. That makes a deploy which has lost its
+# credentials degrade instead of crash — but the dashboard is told which client
+# is live and says so, because showing generated numbers as real telemetry
+# would be far worse than either outcome.
+langsmith_api_key = System.get_env("LANGSMITH_API_KEY")
+langsmith_endpoint = System.get_env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+
 langsmith_client =
   case System.get_env("LANGSMITH_CLIENT") do
     "http" ->
@@ -42,23 +52,34 @@ langsmith_client =
       AgentLens.LangSmith.Mock
 
     nil ->
-      if config_env() == :prod, do: AgentLens.LangSmith.HTTP, else: AgentLens.LangSmith.Mock
+      if AgentLens.LangSmith.HTTP.configured?(
+           api_key: langsmith_api_key,
+           endpoint: langsmith_endpoint
+         ) do
+        AgentLens.LangSmith.HTTP
+      else
+        AgentLens.LangSmith.Mock
+      end
 
     other ->
       raise """
       invalid LANGSMITH_CLIENT: #{inspect(other)}
 
-      Expected "http" or "mock".
+      Expected "http", "mock", or nothing at all — with nothing set, the client
+      is chosen by whether LANGSMITH_API_KEY is present.
       """
   end
 
-# Fail fast on a missing key, but only when we actually intend to call
-# LangSmith. An unconditional fetch_env! here would break `mix test` and dev,
-# which run against the mock by design.
-langsmith_api_key =
-  if langsmith_client == AgentLens.LangSmith.HTTP do
-    System.fetch_env!("LANGSMITH_API_KEY")
-  end
+# Explicitly asking for the HTTP client without the credentials to use it is a
+# mistake worth failing on, rather than silently serving mock data to something
+# that asked for the real thing.
+if langsmith_client == AgentLens.LangSmith.HTTP and is_nil(langsmith_api_key) do
+  raise """
+  LANGSMITH_CLIENT=http was requested but LANGSMITH_API_KEY is not set.
+
+  Unset LANGSMITH_CLIENT to fall back to the mock automatically.
+  """
+end
 
 # Comma-separated workspace ids, one per agent. Against the mock these are
 # arbitrary labels, so dev and test get a sample set rather than nothing.
@@ -86,9 +107,19 @@ end
 
 config :agent_lens, :langsmith,
   client: langsmith_client,
-  endpoint: System.get_env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"),
+  endpoint: langsmith_endpoint,
   api_key: langsmith_api_key,
   workspaces: langsmith_workspaces
+
+# The judge tier only reaches a real model when a proxy is configured for it.
+# Same rule as LangSmith: absent configuration means the mock, not a crash.
+litellm_endpoint = System.get_env("LITELLM_ENDPOINT")
+
+config :agent_lens, :llm,
+  client: if(litellm_endpoint, do: AgentLens.LLM.LiteLLM, else: AgentLens.LLM.Mock),
+  endpoint: litellm_endpoint,
+  api_key: System.get_env("LITELLM_API_KEY"),
+  model: System.get_env("LITELLM_MODEL", "gpt-4o-mini")
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.

@@ -71,7 +71,34 @@ defmodule AgentLens.Kpi do
   """
   @callback component() :: module() | nil
 
-  @optional_callbacks requires: 0, depends_on: 0, component: 0
+  @doc """
+  The prompt that would let this KPI be scored locally, or `:skip`.
+
+  This is what makes a judged KPI backfillable. LangSmith's online evaluators
+  only score traces going *forward*, so a newly added evaluator gives you no
+  history at all — the chart starts the day you switched it on. With retained
+  payloads and a prompt, the same KPI can be scored across everything still
+  inside the retention window.
+
+  A KPI that returns `:skip` simply cannot be backfilled, which is a fact worth
+  stating plainly rather than a gap to paper over.
+  """
+  @callback judge_prompt(Input.Run.t()) :: {:ok, String.t()} | :skip
+
+  @doc """
+  Turns a model's reply into a score.
+
+  Separate from `judge_prompt/1` so neither side has to know about the other's
+  I/O: the KPI writes a prompt and reads a string, and the worker owns every
+  call to the model.
+  """
+  @callback parse_score(String.t()) :: {:ok, float()} | :error
+
+  @optional_callbacks requires: 0,
+                      depends_on: 0,
+                      component: 0,
+                      judge_prompt: 1,
+                      parse_score: 1
 
   @doc false
   defmacro __using__(_opts) do
@@ -87,7 +114,17 @@ defmodule AgentLens.Kpi do
       @impl true
       def component, do: nil
 
-      defoverridable requires: 0, depends_on: 0, component: 0
+      @impl true
+      def judge_prompt(_input), do: :skip
+
+      @impl true
+      def parse_score(_text), do: :error
+
+      defoverridable requires: 0,
+                     depends_on: 0,
+                     component: 0,
+                     judge_prompt: 1,
+                     parse_score: 1
     end
   end
 
@@ -102,5 +139,14 @@ defmodule AgentLens.Kpi do
     Code.ensure_loaded?(module) and
       function_exported?(module, :definition, 0) and
       function_exported?(module, :compute, 1)
+  end
+
+  @doc """
+  Whether a KPI can be scored locally, and so backfilled across history.
+  """
+  @spec judgeable?(module(), Input.Run.t()) :: boolean()
+  def judgeable?(module, sample_input) do
+    function_exported?(module, :judge_prompt, 1) and
+      match?({:ok, _prompt}, module.judge_prompt(sample_input))
   end
 end
